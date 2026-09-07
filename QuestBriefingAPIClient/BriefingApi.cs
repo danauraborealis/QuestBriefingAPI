@@ -1,3 +1,4 @@
+using System.IO;
 using System.Reflection;
 
 namespace Manimal.QuestBriefingAPI;
@@ -31,7 +32,7 @@ public static class BriefingApi
     /// <returns>True if the recording was registered, false if it was already registered by another mod.</returns>
     public static bool Register(string ownerId, string questId, Assembly assembly, string fileName, string traderId = null,
         bool? radioFilter = null, bool? radioCues = null) =>
-        Registry.Register(ownerId, questId, assembly.Location, fileName, traderId, radioFilter, radioCues);
+        Registry.Register(ownerId, questId, Path.GetDirectoryName(assembly.Location), fileName, traderId, radioFilter, radioCues);
     
     /// <summary>Removes a recording only if it belongs to this owner. Reselect the quest to refresh its UI.</summary>
     public static bool Unregister(string ownerId, string questId) => Registry.Unregister(ownerId, questId);

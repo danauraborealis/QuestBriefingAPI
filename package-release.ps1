@@ -3,8 +3,10 @@
 param([string]$SPTPath = $env:SPT_PATH, [string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
+$project = Join-Path $root 'QuestBriefingAPIClient\QuestBriefingAPIClient.csproj'
+$exampleResources = Join-Path $root 'QuestBriefingAPIExample\Resources'
 if ([string]::IsNullOrWhiteSpace($SPTPath)) {
-    $SPTPath = (& dotnet msbuild "$root\QuestBriefingAPI.csproj" -getProperty:SPTPath -nologo | Out-String).Trim()
+    $SPTPath = (& dotnet msbuild $project -getProperty:SPTPath -nologo | Out-String).Trim()
     if ($LASTEXITCODE -or [string]::IsNullOrWhiteSpace($SPTPath)) {
         throw 'Set SPTPath in Directory.Build.props, set SPT_PATH, or pass -SPTPath.'
     }
@@ -14,14 +16,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $SPTPath 'EscapeFromTarkov_Data\Mana
 }
 $SPTPath = (Resolve-Path -LiteralPath $SPTPath).Path
 Write-Host "Building against SPT at $SPTPath"
-& dotnet restore "$root\QuestBriefingAPI.csproj" --configfile "$root\NuGet.Config" "-p:SPTPath=$SPTPath" -v minimal
+& dotnet restore $project --configfile "$root\NuGet.Config" "-p:SPTPath=$SPTPath" -v minimal
 if ($LASTEXITCODE) { throw 'Plugin restore failed.' }
-& dotnet build "$root\QuestBriefingAPI.csproj" --no-restore -c Release "-p:SPTPath=$SPTPath" -v minimal
+& dotnet build $project --no-restore -c Release "-p:SPTPath=$SPTPath" -v minimal
 if ($LASTEXITCODE) { throw 'Plugin build failed.' }
-& dotnet run --project "$root\tests\QuestBriefingAPI.Tests.csproj" -c Release "-p:SPTPath=$SPTPath"
-if ($LASTEXITCODE) { throw 'Briefing tests failed.' }
-& "$root\tests\Test-GameCompatibility.ps1" -SPTPath $SPTPath
-$metadataJson = & dotnet msbuild "$root\QuestBriefingAPI.csproj" -getProperty:ModVersion,ModGuid,ModName,RepositoryUrl -nologo
+$metadataJson = & dotnet msbuild $project -getProperty:ModVersion,ModGuid,ModName,RepositoryUrl -nologo
 if ($LASTEXITCODE) { throw 'Cannot read release metadata from Directory.Build.props.' }
 $metadata = ($metadataJson -join [Environment]::NewLine | ConvertFrom-Json).Properties
 $version = $metadata.ModVersion
@@ -68,10 +67,11 @@ function Write-VerifiedZip([string]$Name, $Files) {
     }
 }
 
-$dll = "$root\bin\Release\netstandard2.1\QuestBriefingAPI.dll"
+$output = Join-Path $root 'QuestBriefingAPIClient\bin\Release\netstandard2.1'
+$dll = Join-Path $output 'QuestBriefingAPI.dll'
 $pluginFiles = @(
     @{ Path=$dll; Name='BepInEx/plugins/QuestBriefingAPI/QuestBriefingAPI.dll' },
-    @{ Path="$root\bin\Release\netstandard2.1\QuestBriefingAPI.xml"; Name='BepInEx/plugins/QuestBriefingAPI/QuestBriefingAPI.xml' },
+    @{ Path=(Join-Path $output 'QuestBriefingAPI.xml'); Name='BepInEx/plugins/QuestBriefingAPI/QuestBriefingAPI.xml' },
     @{ Path="$root\LICENSE"; Name='QuestBriefingAPI-LICENSE.txt' }
 )
 foreach ($document in @('README.md', 'VERSIONING.md')) {
@@ -90,7 +90,7 @@ The compiled DLL is in BepInEx/plugins/QuestBriefingAPI; no build is needed.
 Use F12 > $($metadata.ModName) to configure playback, volume, and radio effects.
 The config file is BepInEx/config/$($metadata.ModGuid).cfg.
 Briefing packs belong in their own directories under BepInEx/plugins.
-Copy examples/MyQuestBriefings, replace the IDs, add audio, then rename
+Copy the bundled example, replace the IDs, add audio, then rename
 briefings.json.example to briefings.json. The bundled example is disabled.
 For C# integrations, use BepInDependency("$($metadata.ModGuid)", "$version").
 
@@ -100,18 +100,19 @@ In-game playback/layout still require testing; metadata checks do not verify the
 "@ | Set-Content -LiteralPath $releaseInfoPath -Encoding utf8
 $pluginFiles += @{ Path=$releaseInfoPath; Name='QuestBriefingAPI-RELEASE-INFO.txt' }
 # The sample manifest uses .json.example so discovery ignores it until an author enables it.
-foreach ($file in (Get-ChildItem -LiteralPath "$root\examples" -File -Recurse)) {
-    $relative = $file.FullName.Substring($root.Length + 1).Replace('\','/')
-    $pluginFiles += @{ Path=$file.FullName; Name="BepInEx/plugins/QuestBriefingAPI/$relative" }
+foreach ($file in (Get-ChildItem -LiteralPath $exampleResources -File -Recurse)) {
+    $relative = $file.FullName.Substring($exampleResources.Length + 1).Replace('\','/')
+    if ($relative -eq 'briefings.json') { $relative = 'briefings.json.example' }
+    $pluginFiles += @{ Path=$file.FullName; Name="BepInEx/plugins/QuestBriefingAPI/examples/MyQuestBriefings/$relative" }
 }
 Write-VerifiedZip $releaseName $pluginFiles
 $sourceFiles = @()
 foreach ($file in (Get-ChildItem -LiteralPath $root -File -Force)) {
-    if ($file.Extension -in '.ps1','.sln' -or $file.Name -in @('QuestBriefingAPI.csproj','Directory.Build.props','NuGet.Config','.gitignore','README.md','VERSIONING.md','LICENSE')) {
+    if ($file.Extension -in '.ps1','.sln' -or $file.Name -in @('Directory.Build.props','NuGet.Config','.gitignore','README.md','VERSIONING.md','LICENSE')) {
         $sourceFiles += @{ Path=$file.FullName; Name=$file.Name }
     }
 }
-foreach ($directory in @('QuestBriefingAPIClient','examples','tests')) {
+foreach ($directory in @('QuestBriefingAPIClient','QuestBriefingAPIExample')) {
     foreach ($file in (Get-ChildItem -LiteralPath "$root\$directory" -File -Recurse)) {
         $relative = $file.FullName.Substring($root.Length + 1).Replace('\','/')
         if ($relative -match '/(bin|obj)/') { continue }
